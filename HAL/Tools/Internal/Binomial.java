@@ -216,151 +216,270 @@ public class Binomial implements Serializable {
             return logFactorials[k];
         }
 }
+    /**
+     * Samples from binomial distribution using BTPE algorithm (long version).
+     * Uses inversion for small np, rejection sampling for large np.
+     */
     public long ColtLong(long n, double p, Rand rn) {
-        if(p==1){
+        if (p == 1) {
             return n;
         }
-        double C1_3 = 0.3333333333333333D;
-        double C5_8 = 0.625D;
-        double C1_6 = 0.16666666666666666D;
-        boolean DMAX_KM = true;
-        long i;
-        double f;
-        if(n != this.n_lastL || p != this.p_last) {
-            this.n_lastL = n;
-            this.p_last = p;
-            this.par = Math.min(p, 1.0D - p);
-            this.q = 1.0D - this.par;
-            this.np = (double)n * this.par;
-            if(this.np <= 0.0D) {
-                return -1;
+
+        initializeParametersLong(n, p);
+
+        if (this.np < 10.0D) {
+            return sampleSmallNpLong(n, p, rn);
+        } else {
+            return sampleLargeNpLong(n, p, rn);
+        }
+    }
+
+    /**
+     * Initialize distribution parameters for long version if n or p changed.
+     */
+    private void initializeParametersLong(long n, double p) {
+        if (n == this.n_lastL && p == this.p_last) {
+            return;
+        }
+
+        this.n_lastL = n;
+        this.p_last = p;
+        this.par = Math.min(p, 1.0D - p);
+        this.q = 1.0D - this.par;
+        this.np = (double)n * this.par;
+
+        if (this.np <= 0.0D) {
+            return;
+        }
+
+        double rm = this.np + this.par;
+        this.mL = (long)rm;
+
+        if (this.np < 10.0D) {
+            initializeSmallNpParametersLong(n);
+        } else {
+            initializeLargeNpParametersLong(n, rm);
+        }
+    }
+
+    /**
+     * Initialize parameters for small np case (inversion method).
+     */
+    private void initializeSmallNpParametersLong(long n) {
+        this.p0 = Math.exp((double)n * Math.log(this.q));
+        long bh = (long)(this.np + 10.0D * Math.sqrt(this.np * this.q));
+        this.bL = Math.min(n, bh);
+    }
+
+    /**
+     * Initialize parameters for large np case (BTPE rejection method).
+     */
+    private void initializeLargeNpParametersLong(long n, double rm) {
+        this.rc = ((double)n + 1.0D) * (this.pq = this.par / this.q);
+        this.ss = this.np * this.q;
+
+        long i = (long)(2.195D * Math.sqrt(this.ss) - 4.6D * this.q);
+        this.xm = (double)this.mL + 0.5D;
+        this.xl = (double)(this.mL - i);
+        this.xr = (double)((long)(this.mL + i) + 1L);
+
+        double f = (rm - this.xl) / (rm - this.xl * this.par);
+        this.ll = f * (1.0D + 0.5D * f);
+        f = (this.xr - rm) / (this.xr * this.q);
+        this.lr = f * (1.0D + 0.5D * f);
+
+        this.c = 0.134D + 20.5D / (15.3D + (double)this.mL);
+        this.p1 = (double)i + 0.5D;
+        this.p2 = this.p1 * (1.0D + this.c + this.c);
+        this.p3 = this.p2 + this.c / this.ll;
+        this.p4 = this.p3 + this.c / this.lr;
+    }
+
+    /**
+     * Sample using inversion method for small np.
+     */
+    private long sampleSmallNpLong(long n, double p, Rand rn) {
+        long K = 0;
+        double pk = this.p0;
+        double U = rn.Double();
+
+        while (U > pk) {
+            ++K;
+            if (K > this.bL) {
+                U = rn.Double();
+                K = 0;
+                pk = this.p0;
+            } else {
+                U -= pk;
+                pk = (double)(n - K + 1) * this.par * pk / ((double)K * this.q);
+            }
+        }
+
+        return p > 0.5D ? n - K : K;
+    }
+
+    /**
+     * Sample using BTPE rejection method for large np.
+     */
+    private long sampleLargeNpLong(long n, double p, Rand rn) {
+        while (true) {
+            CandidateResultLong candidate = generateCandidateLong(n, p, rn);
+            if (candidate.accepted) {
+                return candidate.K;
             }
 
-            double rm = this.np + this.par;
-            this.mL = (long)rm;
-            if(this.np < 10.0D) {
-                this.p0 = Math.exp((double)n * Math.log(this.q));
-                long bh = (long)(this.np + 10.0D * Math.sqrt(this.np * this.q));
-                this.bL = Math.min(n, bh);
-            } else {
-                this.rc = ((double)n + 1.0D) * (this.pq = this.par / this.q);
-                this.ss = this.np * this.q;
-                i = (long)(2.195D * Math.sqrt(this.ss) - 4.6D * this.q);
-                this.xm = (double)this.mL + 0.5D;
-                this.xl = (double)(this.mL - i);
-                this.xr = (double)((long)(this.mL + i) + 1L);
-                f = (rm - this.xl) / (rm - this.xl * this.par);
-                this.ll = f * (1.0D + 0.5D * f);
-                f = (this.xr - rm) / (this.xr * this.q);
-                this.lr = f * (1.0D + 0.5D * f);
-                this.c = 0.134D + 20.5D / (15.3D + (double)this.mL);
-                this.p1 = (double)i + 0.5D;
-                this.p2 = this.p1 * (1.0D + this.c + this.c);
-                this.p3 = this.p2 + this.c / this.ll;
-                this.p4 = this.p3 + this.c / this.lr;
+            if (acceptCandidateLong(n, candidate.K, candidate.V)) {
+                return p > 0.5D ? n - candidate.K : candidate.K;
             }
+        }
+    }
+
+    /**
+     * Generate candidate value K from geometric regions.
+     */
+    private CandidateResultLong generateCandidateLong(long n, double p, Rand rn) {
+        double V = rn.Double();
+        double U = rn.Double() * this.p4;
+
+        // Region 1: Rectangle
+        if (U <= this.p1) {
+            long K = (long)(this.xm - U + this.p1 * V);
+            return new CandidateResultLong(K, V, true, p > 0.5D ? n - K : K);
         }
 
         long K;
-        double U;
-        if(this.np < 10.0D) {
-            K = 0;
-            double pk = this.p0;
-            U = rn.Double();
+        // Region 2: Triangle
+        if (U <= this.p2) {
+            double X = this.xl + (U - this.p1) / this.c;
+            V = V * this.c + 1.0D - Math.abs(this.xm - X) / this.p1;
+            if (V < 1.0D) {
+                K = (long)X;
+                return new CandidateResultLong(K, V, false, 0);
+            }
+        }
+        // Region 3: Left exponential
+        else if (U <= this.p3) {
+            double X = this.xl + Math.log(V) / this.ll;
+            if (X >= 0.0D) {
+                K = (long)X;
+                V *= (U - this.p2) * this.ll;
+                return new CandidateResultLong(K, V, false, 0);
+            }
+        }
+        // Region 4: Right exponential
+        else {
+            K = (long)(this.xr - Math.log(V) / this.lr);
+            if (K <= n) {
+                V *= (U - this.p3) * this.lr;
+                return new CandidateResultLong(K, V, false, 0);
+            }
+        }
 
-            while(U > pk) {
-                ++K;
-                if(K > this.bL) {
-                    U = rn.Double();
-                    K = 0;
-                    pk = this.p0;
-                } else {
-                    U -= pk;
-                    pk = (double)(n - K + 1) * this.par * pk / ((double)K * this.q);
+        // Candidate rejected, retry
+        return generateCandidateLong(n, p, rn);
+    }
+
+    /**
+     * Test whether to accept candidate K using either fast or exact test.
+     */
+    private boolean acceptCandidateLong(long n, long K, double V) {
+        long Km = Math.abs(K - this.mL);
+
+        // Fast acceptance test for large Km
+        if (Km > 20 && (double)((long)(Km + Km) + 2L) < this.ss) {
+            return acceptCandidateFastLong(n, K, Km, V);
+        }
+        // Exact test for small Km
+        else {
+            return acceptCandidateExactLong(K, V);
+        }
+    }
+
+    /**
+     * Fast acceptance test using normal approximation.
+     */
+    private boolean acceptCandidateFastLong(long n, long K, long Km, double V) {
+        V = Math.log(V);
+        double T = (double)(-Km * Km) / (this.ss + this.ss);
+        double E = (double)Km / this.ss * (((double)Km * ((double)Km * 0.3333333333333333D + 0.625D) + 0.16666666666666666D) / this.ss + 0.5D);
+
+        if (V <= T - E) {
+            return true;
+        }
+
+        if (V > T + E) {
+            return false;
+        }
+
+        // Borderline case: use exact test
+        return acceptCandidateExactStirlingLong(n, K, V);
+    }
+
+    /**
+     * Exact acceptance test using Stirling's approximation.
+     */
+    private boolean acceptCandidateExactStirlingLong(long n, long K, double V) {
+        if (n != this.n_prevL || this.par != this.p_prev) {
+            this.n_prevL = n;
+            this.p_prev = this.par;
+            this.nmL = n - this.mL + 1;
+            this.ch = this.xm * Math.log(((double)this.mL + 1.0D) / (this.pq * (double)this.nmL))
+                      + stirlingCorrection(this.mL + 1) + stirlingCorrection(this.nmL);
+        }
+
+        long nK = n - K + 1;
+        double logRatio = this.ch
+                        + ((double)n + 1.0D) * Math.log((double)this.nmL / (double)nK)
+                        + ((double)K + 0.5D) * Math.log((double)nK * this.pq / ((double)K + 1.0D))
+                        - stirlingCorrection(K + 1) - stirlingCorrection(nK);
+
+        return V <= logRatio;
+    }
+
+    /**
+     * Exact acceptance test using ratio of probabilities.
+     */
+    private boolean acceptCandidateExactLong(long K, double V) {
+        double f = 1.0D;
+        long i;
+
+        if (this.mL < K) {
+            i = this.mL;
+            while (i < K) {
+                ++i;
+                f *= this.rc / (double)i - this.pq;
+                if (f < V) {
+                    return false;
                 }
             }
-
-            return p > 0.5D?n - K:K;
         } else {
-            while(true) {
-                double V;
-                while(true) {
-                    V = rn.Double();
-                    if((U = rn.Double() * this.p4) <= this.p1) {
-                        K = (long)(this.xm - U + this.p1 * V);
-                        return p > 0.5D?n - K:K;
-                    }
-
-                    double X;
-                    if(U <= this.p2) {
-                        X = this.xl + (U - this.p1) / this.c;
-                        if((V = V * this.c + 1.0D - Math.abs(this.xm - X) / this.p1) < 1.0D) {
-                            K = (long)X;
-                            break;
-                        }
-                    } else if(U <= this.p3) {
-                        if((X = this.xl + Math.log(V) / this.ll) >= 0.0D) {
-                            K = (long)X;
-                            V *= (U - this.p2) * this.ll;
-                            break;
-                        }
-                    } else if((K = (long)(this.xr - Math.log(V) / this.lr)) <= n) {
-                        V *= (U - this.p3) * this.lr;
-                        break;
-                    }
-                }
-
-                long Km;
-                if((Km = Math.abs(K - this.mL)) > 20 && (double)((long)(Km + Km) + 2L) < this.ss) {
-                    V = Math.log(V);
-                    double T = (double)(-Km * Km) / (this.ss + this.ss);
-                    double E = (double)Km / this.ss * (((double)Km * ((double)Km * 0.3333333333333333D + 0.625D) + 0.16666666666666666D) / this.ss + 0.5D);
-                    if(V <= T - E) {
-                        break;
-                    }
-
-                    if(V <= T + E) {
-                        if(n != this.n_prevL || this.par != this.p_prev) {
-                            this.n_prevL = n;
-                            this.p_prev = this.par;
-                            this.nmL = n - this.mL + 1;
-                            this.ch = this.xm * Math.log(((double)this.mL + 1.0D) / (this.pq * (double)this.nmL)) + stirlingCorrection(this.mL + 1) + stirlingCorrection(this.nmL);
-                        }
-
-                        long nK = n - K + 1;
-                        if(V <= this.ch + ((double)n + 1.0D) * Math.log((double)this.nmL / (double)nK) + ((double)K + 0.5D) * Math.log((double)nK * this.pq / ((double)K + 1.0D)) - stirlingCorrection(K + 1) - stirlingCorrection(nK)) {
-                            break;
-                        }
-                    }
-                } else {
-                    f = 1.0D;
-                    if(this.m < K) {
-                        i = this.m;
-
-                        while(i < K) {
-                            ++i;
-                            if((f *= this.rc / (double)i - this.pq) < V) {
-                                break;
-                            }
-                        }
-                    } else {
-                        i = K;
-
-                        while(i < this.m) {
-                            ++i;
-                            if((V *= this.rc / (double)i - this.pq) > f) {
-                                break;
-                            }
-                        }
-                    }
-
-                    if(V <= f) {
-                        break;
-                    }
+            i = K;
+            while (i < this.mL) {
+                ++i;
+                V *= this.rc / (double)i - this.pq;
+                if (V > f) {
+                    return false;
                 }
             }
+        }
 
-            return p > 0.5D?n - K:K;
+        return V <= f;
+    }
+
+    /**
+     * Helper class to hold candidate generation results.
+     */
+    private static class CandidateResultLong {
+        final long K;
+        final double V;
+        final boolean accepted;
+        final long result;
+
+        CandidateResultLong(long K, double V, boolean accepted, long result) {
+            this.K = K;
+            this.V = V;
+            this.accepted = accepted;
+            this.result = result;
         }
     }
     public int ColtInt(Rand rn){
@@ -369,148 +488,266 @@ public class Binomial implements Serializable {
     public long ColtLong(Rand rn){
         return ColtLong(this.n_lastL,this.p_last,rn);
     }
+    /**
+     * Samples from binomial distribution using BTPE algorithm (int version).
+     * Uses inversion for small np, rejection sampling for large np.
+     */
     public int ColtInt(int n, double p, Rand rn) {
-        double C1_3 = 0.3333333333333333D;
-        double C5_8 = 0.625D;
-        double C1_6 = 0.16666666666666666D;
-        boolean DMAX_KM = true;
-        int i;
-        double f;
-        if(n != this.n_last || p != this.p_last) {
-            this.n_last = n;
-            this.p_last = p;
-            this.par = Math.min(p, 1.0D - p);
-            this.q = 1.0D - this.par;
-            this.np = (double)n * this.par;
-            if(this.np <= 0.0D) {
-                return -1;
-            }
+        initializeParametersInt(n, p);
 
-            double rm = this.np + this.par;
-            this.m = (int)rm;
-            if(this.np < 10.0D) {
-                this.p0 = Math.exp((double)n * Math.log(this.q));
-                int bh = (int)(this.np + 10.0D * Math.sqrt(this.np * this.q));
-                this.b = Math.min(n, bh);
+        if (this.np < 10.0D) {
+            return sampleSmallNpInt(n, p, rn);
+        } else {
+            return sampleLargeNpInt(n, p, rn);
+        }
+    }
+
+    /**
+     * Initialize distribution parameters for int version if n or p changed.
+     */
+    private void initializeParametersInt(int n, double p) {
+        if (n == this.n_last && p == this.p_last) {
+            return;
+        }
+
+        this.n_last = n;
+        this.p_last = p;
+        this.par = Math.min(p, 1.0D - p);
+        this.q = 1.0D - this.par;
+        this.np = (double)n * this.par;
+
+        if (this.np <= 0.0D) {
+            return;
+        }
+
+        double rm = this.np + this.par;
+        this.m = (int)rm;
+
+        if (this.np < 10.0D) {
+            initializeSmallNpParametersInt(n);
+        } else {
+            initializeLargeNpParametersInt(n, rm);
+        }
+    }
+
+    /**
+     * Initialize parameters for small np case (inversion method).
+     */
+    private void initializeSmallNpParametersInt(int n) {
+        this.p0 = Math.exp((double)n * Math.log(this.q));
+        int bh = (int)(this.np + 10.0D * Math.sqrt(this.np * this.q));
+        this.b = Math.min(n, bh);
+    }
+
+    /**
+     * Initialize parameters for large np case (BTPE rejection method).
+     */
+    private void initializeLargeNpParametersInt(int n, double rm) {
+        this.rc = ((double)n + 1.0D) * (this.pq = this.par / this.q);
+        this.ss = this.np * this.q;
+
+        int i = (int)(2.195D * Math.sqrt(this.ss) - 4.6D * this.q);
+        this.xm = (double)this.m + 0.5D;
+        this.xl = (double)(this.m - i);
+        this.xr = (double)((long)(this.m + i) + 1L);
+
+        double f = (rm - this.xl) / (rm - this.xl * this.par);
+        this.ll = f * (1.0D + 0.5D * f);
+        f = (this.xr - rm) / (this.xr * this.q);
+        this.lr = f * (1.0D + 0.5D * f);
+
+        this.c = 0.134D + 20.5D / (15.3D + (double)this.m);
+        this.p1 = (double)i + 0.5D;
+        this.p2 = this.p1 * (1.0D + this.c + this.c);
+        this.p3 = this.p2 + this.c / this.ll;
+        this.p4 = this.p3 + this.c / this.lr;
+    }
+
+    /**
+     * Sample using inversion method for small np.
+     */
+    private int sampleSmallNpInt(int n, double p, Rand rn) {
+        int K = 0;
+        double pk = this.p0;
+        double U = rn.Double();
+
+        while (U > pk) {
+            ++K;
+            if (K > this.b) {
+                U = rn.Double();
+                K = 0;
+                pk = this.p0;
             } else {
-                this.rc = ((double)n + 1.0D) * (this.pq = this.par / this.q);
-                this.ss = this.np * this.q;
-                i = (int)(2.195D * Math.sqrt(this.ss) - 4.6D * this.q);
-                this.xm = (double)this.m + 0.5D;
-                this.xl = (double)(this.m - i);
-                this.xr = (double)((long)(this.m + i) + 1L);
-                f = (rm - this.xl) / (rm - this.xl * this.par);
-                this.ll = f * (1.0D + 0.5D * f);
-                f = (this.xr - rm) / (this.xr * this.q);
-                this.lr = f * (1.0D + 0.5D * f);
-                this.c = 0.134D + 20.5D / (15.3D + (double)this.m);
-                this.p1 = (double)i + 0.5D;
-                this.p2 = this.p1 * (1.0D + this.c + this.c);
-                this.p3 = this.p2 + this.c / this.ll;
-                this.p4 = this.p3 + this.c / this.lr;
+                U -= pk;
+                pk = (double)(n - K + 1) * this.par * pk / ((double)K * this.q);
             }
         }
 
+        return p > 0.5D ? n - K : K;
+    }
+
+    /**
+     * Sample using BTPE rejection method for large np.
+     */
+    private int sampleLargeNpInt(int n, double p, Rand rn) {
+        while (true) {
+            CandidateResultInt candidate = generateCandidateInt(n, p, rn);
+            if (candidate.accepted) {
+                return candidate.result;
+            }
+
+            if (acceptCandidateInt(n, candidate.K, candidate.V)) {
+                return p > 0.5D ? n - candidate.K : candidate.K;
+            }
+        }
+    }
+
+    /**
+     * Generate candidate value K from geometric regions.
+     */
+    private CandidateResultInt generateCandidateInt(int n, double p, Rand rn) {
+        double V = rn.Double();
+        double U = rn.Double() * this.p4;
+
+        // Region 1: Rectangle
+        if (U <= this.p1) {
+            int K = (int)(this.xm - U + this.p1 * V);
+            return new CandidateResultInt(K, V, true, p > 0.5D ? n - K : K);
+        }
+
         int K;
-        double U;
-        if(this.np < 10.0D) {
-            K = 0;
-            double pk = this.p0;
-            U = rn.Double();
+        // Region 2: Triangle
+        if (U <= this.p2) {
+            double X = this.xl + (U - this.p1) / this.c;
+            V = V * this.c + 1.0D - Math.abs(this.xm - X) / this.p1;
+            if (V < 1.0D) {
+                K = (int)X;
+                return new CandidateResultInt(K, V, false, 0);
+            }
+        }
+        // Region 3: Left exponential
+        else if (U <= this.p3) {
+            double X = this.xl + Math.log(V) / this.ll;
+            if (X >= 0.0D) {
+                K = (int)X;
+                V *= (U - this.p2) * this.ll;
+                return new CandidateResultInt(K, V, false, 0);
+            }
+        }
+        // Region 4: Right exponential
+        else {
+            K = (int)(this.xr - Math.log(V) / this.lr);
+            if (K <= n) {
+                V *= (U - this.p3) * this.lr;
+                return new CandidateResultInt(K, V, false, 0);
+            }
+        }
 
-            while(U > pk) {
-                ++K;
-                if(K > this.b) {
-                    U = rn.Double();
-                    K = 0;
-                    pk = this.p0;
-                } else {
-                    U -= pk;
-                    pk = (double)(n - K + 1) * this.par * pk / ((double)K * this.q);
+        // Candidate rejected, retry
+        return generateCandidateInt(n, p, rn);
+    }
+
+    /**
+     * Test whether to accept candidate K using either fast or exact test.
+     */
+    private boolean acceptCandidateInt(int n, int K, double V) {
+        int Km = Math.abs(K - this.m);
+
+        // Fast acceptance test for large Km
+        if (Km > 20 && (double)((long)(Km + Km) + 2L) < this.ss) {
+            return acceptCandidateFastInt(n, K, Km, V);
+        }
+        // Exact test for small Km
+        else {
+            return acceptCandidateExactInt(K, V);
+        }
+    }
+
+    /**
+     * Fast acceptance test using normal approximation.
+     */
+    private boolean acceptCandidateFastInt(int n, int K, int Km, double V) {
+        V = Math.log(V);
+        double T = (double)(-Km * Km) / (this.ss + this.ss);
+        double E = (double)Km / this.ss * (((double)Km * ((double)Km * 0.3333333333333333D + 0.625D) + 0.16666666666666666D) / this.ss + 0.5D);
+
+        if (V <= T - E) {
+            return true;
+        }
+
+        if (V > T + E) {
+            return false;
+        }
+
+        // Borderline case: use exact test
+        return acceptCandidateExactStirlingInt(n, K, V);
+    }
+
+    /**
+     * Exact acceptance test using Stirling's approximation.
+     */
+    private boolean acceptCandidateExactStirlingInt(int n, int K, double V) {
+        if (n != this.n_prev || this.par != this.p_prev) {
+            this.n_prev = n;
+            this.p_prev = this.par;
+            this.nm = n - this.m + 1;
+            this.ch = this.xm * Math.log(((double)this.m + 1.0D) / (this.pq * (double)this.nm))
+                      + stirlingCorrection(this.m + 1) + stirlingCorrection(this.nm);
+        }
+
+        int nK = n - K + 1;
+        double logRatio = this.ch
+                        + ((double)n + 1.0D) * Math.log((double)this.nm / (double)nK)
+                        + ((double)K + 0.5D) * Math.log((double)nK * this.pq / ((double)K + 1.0D))
+                        - stirlingCorrection(K + 1) - stirlingCorrection(nK);
+
+        return V <= logRatio;
+    }
+
+    /**
+     * Exact acceptance test using ratio of probabilities.
+     */
+    private boolean acceptCandidateExactInt(int K, double V) {
+        double f = 1.0D;
+        int i;
+
+        if (this.m < K) {
+            i = this.m;
+            while (i < K) {
+                ++i;
+                f *= this.rc / (double)i - this.pq;
+                if (f < V) {
+                    return false;
                 }
             }
-
-            return p > 0.5D?n - K:K;
         } else {
-            while(true) {
-                double V;
-                while(true) {
-                    V = rn.Double();
-                    if((U = rn.Double() * this.p4) <= this.p1) {
-                        K = (int)(this.xm - U + this.p1 * V);
-                        return p > 0.5D?n - K:K;
-                    }
-
-                    double X;
-                    if(U <= this.p2) {
-                        X = this.xl + (U - this.p1) / this.c;
-                        if((V = V * this.c + 1.0D - Math.abs(this.xm - X) / this.p1) < 1.0D) {
-                            K = (int)X;
-                            break;
-                        }
-                    } else if(U <= this.p3) {
-                        if((X = this.xl + Math.log(V) / this.ll) >= 0.0D) {
-                            K = (int)X;
-                            V *= (U - this.p2) * this.ll;
-                            break;
-                        }
-                    } else if((K = (int)(this.xr - Math.log(V) / this.lr)) <= n) {
-                        V *= (U - this.p3) * this.lr;
-                        break;
-                    }
-                }
-
-                int Km;
-                if((Km = Math.abs(K - this.m)) > 20 && (double)((long)(Km + Km) + 2L) < this.ss) {
-                    V = Math.log(V);
-                    double T = (double)(-Km * Km) / (this.ss + this.ss);
-                    double E = (double)Km / this.ss * (((double)Km * ((double)Km * 0.3333333333333333D + 0.625D) + 0.16666666666666666D) / this.ss + 0.5D);
-                    if(V <= T - E) {
-                        break;
-                    }
-
-                    if(V <= T + E) {
-                        if(n != this.n_prev || this.par != this.p_prev) {
-                            this.n_prev = n;
-                            this.p_prev = this.par;
-                            this.nm = n - this.m + 1;
-                            this.ch = this.xm * Math.log(((double)this.m + 1.0D) / (this.pq * (double)this.nm)) + stirlingCorrection(this.m + 1) + stirlingCorrection(this.nm);
-                        }
-
-                        int nK = n - K + 1;
-                        if(V <= this.ch + ((double)n + 1.0D) * Math.log((double)this.nm / (double)nK) + ((double)K + 0.5D) * Math.log((double)nK * this.pq / ((double)K + 1.0D)) - stirlingCorrection(K + 1) - stirlingCorrection(nK)) {
-                            break;
-                        }
-                    }
-                } else {
-                    f = 1.0D;
-                    if(this.m < K) {
-                        i = this.m;
-
-                        while(i < K) {
-                            ++i;
-                            if((f *= this.rc / (double)i - this.pq) < V) {
-                                break;
-                            }
-                        }
-                    } else {
-                        i = K;
-
-                        while(i < this.m) {
-                            ++i;
-                            if((V *= this.rc / (double)i - this.pq) > f) {
-                                break;
-                            }
-                        }
-                    }
-
-                    if(V <= f) {
-                        break;
-                    }
+            i = K;
+            while (i < this.m) {
+                ++i;
+                V *= this.rc / (double)i - this.pq;
+                if (V > f) {
+                    return false;
                 }
             }
+        }
 
-            return p > 0.5D?n - K:K;
+        return V <= f;
+    }
+
+    /**
+     * Helper class to hold candidate generation results.
+     */
+    private static class CandidateResultInt {
+        final int K;
+        final double V;
+        final boolean accepted;
+        final int result;
+
+        CandidateResultInt(int K, double V, boolean accepted, int result) {
+            this.K = K;
+            this.V = V;
+            this.accepted = accepted;
+            this.result = result;
         }
     }
     public int SampleIntFast(int n,double p,Rand rn){
